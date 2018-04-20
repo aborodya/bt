@@ -1,4 +1,5 @@
 from __future__ import division
+
 import copy
 
 import bt
@@ -6,7 +7,11 @@ from bt.core import Node, StrategyBase, SecurityBase, AlgoStack, Strategy
 import pandas as pd
 import numpy as np
 from nose.tools import assert_almost_equal as aae
-import mock
+import sys
+if sys.version_info < (3, 3):
+    import mock
+else:
+    from unittest import mock
 
 
 def test_node_tree():
@@ -245,7 +250,7 @@ def test_update_fails_if_price_is_nan_and_position_open():
         c1.update(dts[i], data.ix[dts[i]])
         assert False
     except Exception as e:
-        assert e.message.startswith('Position is open')
+        assert str(e).startswith('Position is open')
 
     # on the other hand, if position was 0, this should be fine, and update
     # value to 0
@@ -1430,6 +1435,32 @@ def test_strategybase_tree_rebalance():
     assert c2.weight == 0
 
 
+def test_strategybase_tree_decimal_position_rebalance():
+    c1 = SecurityBase('c1')
+    c2 = SecurityBase('c2')
+    s = StrategyBase('p', [c1, c2])
+    s.use_integer_positions(False)
+
+    c1 = s['c1']
+    c2 = s['c2']
+
+    dts = pd.date_range('2010-01-01', periods=3)
+    data = pd.DataFrame(index=dts, columns=['c1', 'c2'], data=100)
+
+    s.setup(data)
+
+    i = 0
+    s.update(dts[i], data.ix[dts[i]])
+
+    s.adjust(1000.2)
+    s.rebalance(0.42, 'c1')
+    s.rebalance(0.58, 'c2')
+
+    aae(c1.value, 420.084)
+    aae(c2.value, 580.116)
+    aae(c1.value + c2.value, 1000.2)
+
+
 def test_rebalance_child_not_in_tree():
     s = StrategyBase('p')
 
@@ -1890,7 +1921,7 @@ def test_outlays():
     # out update
     s.update(dts[i])
 
-    print c1.data['outlay']
+    #print(c1.data['outlay'])
     assert c1.data['outlay'][dts[1]] == (-4 * 100)
     assert c2.data['outlay'][dts[1]] == 100
 
@@ -1980,7 +2011,7 @@ def test_fixed_commissions():
 
     # now we are going to go short c2
     # we want to 'raise' 100 dollars. Since we need at a minimum 100, but we
-    # also have commisisons, we will actually short 2 units in order to raise
+    # also have commissions, we will actually short 2 units in order to raise
     # at least 100
     c2.allocate(-100)
     s.update(dts[i])
@@ -2013,5 +2044,80 @@ def test_degenerate_shorting():
     try:
         c1.allocate(-10)
         assert False
-    except Exception, e:
-        assert 'infinite' in e.message
+    except Exception as e:
+        assert 'full_outlay should always be approaching amount' in str(e)
+
+
+def test_securitybase_allocate():
+    c1 = SecurityBase('c1')
+    s = StrategyBase('p', [c1])
+
+    c1 = s['c1']
+
+    dts = pd.date_range('2010-01-01', periods=3)
+    data = pd.DataFrame(index=dts, columns=['c1'], data=100.)
+    # set the price
+    data['c1'][dts[0]] = 91.40246706608193
+    s.setup(data)
+
+    i = 0
+    s.update(dts[i], data.ix[dts[i]])
+
+    # allocate 100000 to strategy
+    original_capital = 100000.
+    s.adjust(original_capital)
+    # not integer positions
+    c1.integer_positions = False
+    # set the full_outlay and amount
+    full_outlay = 1999.693706988672
+    amount = 1999.6937069886717
+
+    c1.allocate(amount)
+
+    # the results that we want to be true
+    assert np.isclose(full_outlay ,amount,rtol=0.)
+
+    # check that the quantity wasn't decreased and the full_outlay == amount
+    # we can get the full_outlay that was calculated by
+    # original capital - current capital
+    assert np.isclose(full_outlay, original_capital - s._capital, rtol=0.)
+
+
+def test_securitybase_allocate_commisions():
+
+    date_span = pd.DatetimeIndex(start='10/1/2017', end='10/11/2017', freq='B')
+    numper = len(date_span.values)
+    comms = 0.01
+
+    data = [[10, 15, 20, 25, 30, 35, 40, 45],
+            [10, 10, 10, 10, 20, 20, 20, 20],
+            [20, 20, 20, 30, 30, 30, 40, 40],
+            [20, 10, 20, 10, 20, 10, 20, 10]]
+    data = [[row[i] for row in data] for i in range(len(data[0]))]  # Transpose
+    price = pd.DataFrame(data=data, index=date_span)
+    price.columns = ['a', 'b', 'c', 'd']
+    # price = price[['a', 'b']]
+
+    sig1 = pd.DataFrame(price['a'] >= price['b'] + 10, columns=['a'])
+    sig2 = pd.DataFrame(price['a'] < price['b'] + 10, columns=['b'])
+    signal = sig1.join(sig2)
+
+    signal1 = price.diff(1) > 0
+    signal2 = price.diff(1) < 0
+
+    tw = price.copy()
+    tw.loc[:,:] = 0  # Initialize Set everything to 0
+
+    tw[signal1] = -1.0
+    tw[signal2] = 1.0
+
+    s1 = bt.Strategy('long_short', [bt.algos.WeighTarget(tw),
+                                    bt.algos.RunDaily(),
+                                    bt.algos.Rebalance()])
+
+    ####now we create the Backtest , commissions=(lambda q, p: abs(p * q) * comms)
+    t = bt.Backtest(s1, price, initial_capital=1000000, commissions=(lambda q, p: abs(p * q) * comms), progress_bar=False)
+
+    ####and let's run it!
+    res = bt.run(t)
+    ########################
