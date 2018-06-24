@@ -644,7 +644,8 @@ class SelectWhere(Algo):
         if target.now in self.signal.index:
             sig = self.signal.loc[target.now]
             # get tickers where True
-            selected = sig.index[sig]
+            #selected = sig.index[sig]
+            selected = sig[sig == True].index
             # save as list
             if not self.include_no_data:
                 universe = target.universe[
@@ -1177,7 +1178,11 @@ class LimitWeights(Algo):
         if len(tw) == 0:
             return True
 
-        tw = bt.ffn.limit_weights(tw, self.limit)
+        # if the limit < equal weight then set weights to 0
+        if self.limit < 1.0 / len(tw):
+            tw = {}
+        else:
+            tw = bt.ffn.limit_weights(tw, self.limit)
         target.temp['weights'] = tw
 
         return True
