@@ -1539,17 +1539,16 @@ class TargetVol(Algo):
             * self.annualization_factor
         )
 
-        # vol is too high
-        if vol > self.target_volatility:
-            mult = self.target_volatility / vol
-        # vol is too low
-        elif vol < self.target_volatility:
-            mult = self.target_volatility / vol
-        else:
-            mult = 1
+        if isinstance(self.target_volatility, (float, int)):
+            self.target_volatility = {
+                k: self.target_volatility for k in target.temp["weights"].keys()
+            }
 
         for k in target.temp["weights"].keys():
-            target.temp["weights"][k] = target.temp["weights"][k] * mult
+            if k in self.target_volatility.keys():
+                target.temp["weights"][k] = (
+                    target.temp["weights"][k] * self.target_volatility[k] / vol
+                )
 
         return True
 
@@ -1865,14 +1864,16 @@ class RebalanceOverTime(Algo):
             self._days_left = self.n
 
         # if _weights are not None, we have some work to do
-        if self._weights:
+        if self._weights is not None:
             tgt = {}
             # scale delta relative to # of periods left and set that as the new
             # target
-            for t in self._weights:
-                curr = target.children[t].weight if t in target.children else 0.0
-                dlt = (self._weights[t] - curr) / self._days_left
-                tgt[t] = curr + dlt
+            for cname in self._weights.keys():
+                curr = (
+                    target.children[cname].weight if cname in target.children else 0.0
+                )
+                dlt = (self._weights[cname] - curr) / self._days_left
+                tgt[cname] = curr + dlt
 
             # mock weights and call real Rebalance
             target.temp["weights"] = tgt
@@ -2297,13 +2298,13 @@ class UpdateRisk(Algo):
         self.history = history
 
     def _setup_risk(self, target, set_history):
-        """ Setup risk attributes on the node in question """
+        """Setup risk attributes on the node in question"""
         target.risk = {}
         if set_history:
             target.risks = pd.DataFrame(index=target.data.index)
 
     def _setup_measure(self, target, set_history):
-        """ Setup a risk measure within the risk attributes on the node in question """
+        """Setup a risk measure within the risk attributes on the node in question"""
         target.risk[self.measure] = np.NaN
         if set_history:
             target.risks[self.measure] = np.NaN
