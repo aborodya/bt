@@ -9,7 +9,7 @@ from copy import deepcopy
 import cython as cy
 import numpy as np
 import pandas as pd
-from future.utils import iteritems
+
 
 PAR = 100.0
 TOL = 1e-16
@@ -85,6 +85,9 @@ class Node(object):
         self._lazy_children = {}
         self._universe_tickers = []
         self._childrenv = []  # Shortcut to self.children.values()
+        self._original_children_are_present = (children is not None) and (
+            len(children) >= 1
+        )
 
         # strategy children helpers
         self._has_strat_children = False
@@ -138,11 +141,12 @@ class Node(object):
         Args:
             dc (bool): Whether or not to deepcopy nodes before adding them.
         """
+        # if at least 1 children is specified
         if children is not None:
             if isinstance(children, dict):
                 # Preserve the names from the dictionary by renaming the nodes
                 tmp = []
-                for name, c in iteritems(children):
+                for name, c in children.items():
                     if isinstance(c, str):
                         tmp.append(name)
                     else:
@@ -376,6 +380,7 @@ class StrategyBase(Node):
     _last_fee = cy.declare(cy.double)
     _paper_trade = cy.declare(cy.bint)
     bankrupt = cy.declare(cy.bint)
+    _last_chk = cy.declare(cy.bint)
 
     def __init__(self, name, children=None, parent=None):
         Node.__init__(self, name, children=children, parent=parent)
@@ -390,6 +395,8 @@ class StrategyBase(Node):
         self._last_notl_value = 0
         self._last_price = PAR
         self._last_fee = 0
+
+        self._last_chk = 0
 
         # default commission function
         self.commission_fn = self._dflt_comm_fn
@@ -590,9 +597,13 @@ class StrategyBase(Node):
             self._paper = paper
 
         # setup universe
-        funiverse = universe
+        funiverse = universe.copy()
 
-        if self._universe_tickers:
+        # filter only if the node has any children specified as input,
+        # otherwise we use the full universe. If all children are strategies,
+        # funiverse will be empty, to signal that no other ticker should be
+        # used in addition to the strategies
+        if self._original_children_are_present:
             # if we have universe_tickers defined, limit universe to
             # those tickers
             valid_filter = list(
@@ -719,6 +730,7 @@ class StrategyBase(Node):
                 # avoid useless update call
                 if c._issec and not c._needupdate:
                     continue
+
                 c.update(date, data, inow)
                 val += c.value
                 # Strategies always have positive notional value
@@ -1007,6 +1019,7 @@ class StrategyBase(Node):
         # allocate to child
         # figure out weight delta
         c = self.children[child]
+
         if self.fixed_income:
             # In fixed income strategies, the provided "base" value can be used
             # to upscale/downscale the notional_value of the strategy, whereas

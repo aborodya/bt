@@ -148,7 +148,6 @@ class Backtest(object):
         progress_bar=False,
         additional_data=None,
     ):
-
         if data.columns.duplicated().any():
             cols = data.columns[data.columns.duplicated().tolist()].tolist()
             raise Exception(
@@ -307,9 +306,9 @@ class Backtest(object):
             for m in self.strategy.members:
                 if isinstance(m, bt.core.SecurityBase):
                     if self.strategy.fixed_income:
-                        m_values = m.notional_values
+                        m_values = m.notional_values.copy()
                     else:
-                        m_values = m.values
+                        m_values = m.values.copy()
                     if m.name in vals:
                         vals[m.name] += m_values
                     else:
